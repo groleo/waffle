@@ -23,6 +23,12 @@ if(waffle_on_linux)
         set(gbm_default OFF)
     endif()
 
+    if(gbm_FOUND AND libudev_FOUND AND egl_FOUND AND libdrm_FOUND)
+        set(null_default ON)
+    else()
+        set(null_default OFF)
+    endif()
+
     # On Linux, you must enable at least one of the below options.
     option(waffle_has_glx "Build support for GLX" ${glx_default})
     option(waffle_has_wayland "Build support for Wayland" ${wayland_default})
@@ -33,6 +39,8 @@ if(waffle_on_linux)
     # NaCl specific settings.
     set(nacl_sdk_path "" CACHE STRING "Set nacl_sdk path here")
     set(nacl_version "pepper_39" CACHE STRING "Set NaCl bundle here")
+
+    option(waffle_has_null "Build support for Null" ${null_default})
 endif()
 
 option(waffle_build_tests "Build tests" ON)

@@ -7,6 +7,7 @@ install(
         waffle/waffle.h
         waffle/waffle_gbm.h
         waffle/waffle_glx.h
+        waffle/waffle_null.h
         waffle/waffle_version.h
         waffle/waffle_wayland.h
         waffle/waffle_x11_egl.h
