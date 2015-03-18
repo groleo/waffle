@@ -243,6 +243,7 @@ static const struct enum_map platform_map[] = {
     {WAFFLE_PLATFORM_CGL,       "cgl",          },
     {WAFFLE_PLATFORM_GBM,       "gbm"           },
     {WAFFLE_PLATFORM_GLX,       "glx"           },
+    {WAFFLE_PLATFORM_NULL,      "null"           },
     {WAFFLE_PLATFORM_WAYLAND,   "wayland"       },
     {WAFFLE_PLATFORM_WGL,       "wgl"           },
     {WAFFLE_PLATFORM_X11_EGL,   "x11_egl"       },
