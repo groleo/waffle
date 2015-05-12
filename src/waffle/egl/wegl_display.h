@@ -38,6 +38,7 @@ struct wegl_display {
     struct wcore_display wcore;
     EGLDisplay egl;
     bool KHR_create_context;
+    bool EXT_image_dma_buf_import;
 };
 
 DEFINE_CONTAINER_CAST_FUNC(wegl_display,

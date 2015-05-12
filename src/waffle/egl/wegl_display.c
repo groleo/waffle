@@ -50,6 +50,7 @@ get_extensions(struct wegl_display *dpy)
     assert(wcore_error_get_code() == 0);
 
     dpy->KHR_create_context = waffle_is_extension_in_string(extensions, "EGL_KHR_create_context");
+    dpy->EXT_image_dma_buf_import = waffle_is_extension_in_string(extensions, "EGL_EXT_image_dma_buf_import");
 
     return true;
 }
