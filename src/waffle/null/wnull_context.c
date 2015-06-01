@@ -6,10 +6,15 @@
 
 #include <dlfcn.h>
 
+#include "linux_platform.h"
+
 #include "wcore_error.h"
+
+#include "wgbm_platform.h"
 
 #include "wnull_context.h"
 #include "wnull_display.h"
+#include "wnull_window.h"
 
 #if 0
 #include <stdio.h>
@@ -23,6 +28,7 @@ wnull_context_create(struct wcore_platform *wc_plat,
                      struct wcore_config *wc_config,
                      struct wcore_context *wc_share_ctx)
 {
+    struct wgbm_platform *plat = wgbm_platform(wegl_platform(wc_plat));
     struct wnull_context *ctx = wcore_calloc(sizeof(*ctx));
     if (!ctx)
         return NULL;
@@ -42,7 +48,9 @@ wnull_context_create(struct wcore_platform *wc_plat,
     int32_t dl;
     switch (wc_config->attrs.context_api) {
         //XXX could some other APIs work?
-        case WAFFLE_CONTEXT_OPENGL_ES2: dl = WAFFLE_DL_OPENGL_ES2;  break;
+        case WAFFLE_CONTEXT_OPENGL_ES2:
+            dl = WAFFLE_DL_OPENGL_ES2;
+            break;
         default:
             wcore_errorf(WAFFLE_ERROR_BAD_ATTRIBUTE,
                          "WAFFLE_PLATFORM_NULL api must be GLES2");
@@ -50,10 +58,11 @@ wnull_context_create(struct wcore_platform *wc_plat,
     }
 
     bool ok = true;
+
 #define LOOKUP(type, name, args) \
-    ctx->name = waffle_dl_sym(dl, #name); \
+    ctx->name = linux_platform_dl_sym(plat->linux, dl, #name); \
     ok &= ctx->name != NULL;
-    WNULL_GL_FUNCTIONS(LOOKUP)
+    GL_FUNCTIONS(LOOKUP)
 #undef LOOKUP
 
     ok &= wegl_context_init(&ctx->wegl, wc_config, wc_share_ctx);
@@ -75,11 +84,20 @@ wnull_context_destroy(struct wcore_context *wc_ctx)
 
     if (wc_ctx) {
         struct wnull_context *self = wnull_context(wc_ctx);
+        struct wnull_display *dpy = wnull_display(wc_ctx->display);
         prt("destroy context %p\n", self);
+
+        if (self == dpy->current_context) {
+            prt("destroying current context!  you suck!\n", self);
+            wnull_make_current(wc_ctx->display->platform,
+                               wc_ctx->display,
+                               NULL, NULL);
+        }
+
         result = wegl_context_teardown(&self->wegl);
 
         // tell the display this context is gone
-        wnull_display_clean(wnull_display(wc_ctx->display), self, NULL);
+        wnull_display_clean(dpy, self, NULL);
 
         free(self);
     }

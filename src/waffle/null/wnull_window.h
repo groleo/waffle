@@ -42,3 +42,6 @@ wnull_make_current(struct wcore_platform *wc_plat,
                    struct wcore_display *wc_dpy,
                    struct wcore_window *wc_window,
                    struct wcore_context *wc_ctx);
+
+bool
+wnull_window_prepare_draw_buffer(struct wnull_window *self);

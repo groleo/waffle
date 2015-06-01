@@ -202,6 +202,7 @@ endif()
 
 if(waffle_has_null)
     list(APPEND waffle_sources
+        null/wnull_buffer.c
         null/wnull_context.c
         null/wnull_display.c
         null/wnull_platform.c

@@ -6,5 +6,19 @@
 
 #pragma once
 
+#include "wgbm_platform.h"
+
+struct wnull_display;
+
+struct wnull_platform {
+    struct wgbm_platform wgbm;
+    struct wnull_display *current_display;
+};
+
+DEFINE_CONTAINER_CAST_FUNC(wnull_platform,
+                           struct wnull_platform,
+                           struct wgbm_platform,
+                           wgbm)
+
 struct wcore_platform*
 wnull_platform_create(void);

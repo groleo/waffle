@@ -177,7 +177,9 @@ enum waffle_enum {
 
     WAFFLE_WINDOW_NULL_SHOW_METHOD                              = 0x0320,
         WAFFLE_WINDOW_NULL_SHOW_METHOD_FLIP                     = 0x0321,
-        WAFFLE_WINDOW_NULL_SHOW_METHOD_COPY                     = 0x0322,
+        WAFFLE_WINDOW_NULL_SHOW_METHOD_COPY_GL                  = 0x0322,
+        WAFFLE_WINDOW_NULL_SHOW_METHOD_COPY_I915                = 0x0323,
+    WAFFLE_WINDOW_NULL_VSYNC_WAIT                               = 0x0324,
 };
 
 const char*

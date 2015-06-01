@@ -6,39 +6,78 @@
 
 #pragma once
 
-#include <stdbool.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 
 #include "wcore_util.h"
 #include "wegl_context.h"
 
-typedef void *EGLImageKHR;
-typedef void *GLeglImageOES;
-typedef unsigned int GLenum;
-typedef int GLint;
-typedef int GLsizei;
-typedef unsigned int GLuint;
+#define GL_FUNCTIONS(f) \
+f(void  , glActiveTexture                       , (GLenum texture)) \
+f(void  , glAttachShader                        , (GLuint program, GLuint shader)) \
+f(void  , glBindAttribLocation                  , (GLuint program, GLuint index, const GLchar *name))\
+f(void  , glBindBuffer                          , (GLenum target, GLuint buffer)) \
+f(void  , glBindFramebuffer                     , (GLenum target, GLuint framebuffer)) \
+f(void  , glBindRenderbuffer                    , (GLenum target, GLuint renderbuffer)) \
+f(void  , glBindTexture                         , (GLenum target, GLuint texture)) \
+f(void  , glBlendFunc                           , (GLenum sfactor, GLenum dfactor)) \
+f(void  , glBufferData                          , (GLenum target, GLsizeiptr size, const void *data, GLenum usage)) \
+f(GLenum, glCheckFramebufferStatus              , (GLenum target)) \
+f(void  , glClearColor                          , (GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha)) \
+f(void  , glClear                               , (GLbitfield mask)) \
+f(void  , glColorMask                           , (GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha)) \
+f(void  , glCompileShader                       , (GLuint shader)) \
+f(void  , glCopyTexImage2D                      , (GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border)) \
+f(GLuint, glCreateProgram                       , (void)) \
+f(GLuint, glCreateShader                        , (GLenum type)) \
+f(void  , glDeleteBuffers                       , (GLsizei n, const GLuint *buffers)) \
+f(void  , glDeleteFramebuffers                  , (GLsizei n, const GLuint *framebuffers)) \
+f(void  , glDeleteProgram                       , (GLuint program)) \
+f(void  , glDeleteRenderbuffers                 , (GLsizei n, const GLuint *framebuffers)) \
+f(void  , glDeleteShader                        , (GLuint shader)) \
+f(void  , glDeleteTextures                      , (GLsizei n, const GLuint *textures)) \
+f(void  , glDisable                             , (GLenum cap)) \
+f(void  , glDisableVertexAttribArray            , (GLuint index)) \
+f(void  , glDrawArrays                          , (GLenum mode, GLint first, GLsizei count)) \
+f(void  , glEGLImageTargetRenderbufferStorageOES, (GLenum target, GLeglImageOES image)) \
+f(void  , glEGLImageTargetTexture2DOES          , (GLenum target, GLeglImageOES image)) \
+f(void  , glEnable                              , (GLenum cap)) \
+f(void  , glEnableVertexAttribArray             , (GLuint index)) \
+f(void  , glFinish                              , ()) \
+f(void  , glFlush                               , ()) \
+f(void  , glFramebufferRenderbuffer             , (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer)) \
+f(void  , glFramebufferTexture2D                , (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level)) \
+f(void  , glGenBuffers                          , (GLsizei n, GLuint *buffers)) \
+f(void  , glGenFramebuffers                     , (GLsizei n, GLuint *framebuffers)) \
+f(void  , glGenRenderbuffers                    , (GLsizei n, GLuint *renderbuffers)) \
+f(void  , glGenTextures                         , (GLsizei n, GLuint *textures)) \
+f(GLenum, glGetError                            , ()) \
+f(void  , glGetFloatv                           , (GLenum pname, GLfloat *data)) \
+f(void  , glGetFramebufferAttachmentParameteriv , (GLenum target, GLenum attachment, GLenum pname, GLint *params)) \
+f(void  , glGetIntegerv                         , (GLenum pname, GLint *data)) \
+f(void  , glGetProgramiv                        , (GLuint program, GLenum pname, GLint *params)) \
+f(void  , glGetShaderInfoLog                    , (GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *infoLog)) \
+f(void  , glGetShaderiv                         , (GLuint shader, GLenum pname, GLint *params)) \
+f(void  , glGetTexParameteriv                   , (GLenum target, GLenum pname, GLint *params)) \
+f(GLint , glGetUniformLocation                  , (GLuint program, const GLchar *name)) \
+f(void  , glGetVertexAttribiv                   , (GLuint index, GLenum pname, GLint *params)) \
+f(void  , glGetVertexAttribPointerv             , (GLuint index, GLenum pname, void **pointer)) \
+f(void  , glLinkProgram                         , (GLuint program)) \
+f(void  , glRenderbufferStorage                 , (GLenum target, GLenum internalformat, GLsizei width, GLsizei height)) \
+f(void  , glScissor                             , (GLint x, GLint y, GLsizei width, GLsizei height)) \
+f(void  , glShaderSource                        , (GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length)) \
+f(void  , glTexImage2D                          , (GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels)) \
+f(void  , glTexParameteri                       , (GLenum target, GLenum pname, GLint param)) \
+f(void  , glUniform1i                           , (GLint location, GLint v0)) \
+f(void  , glUseProgram                          , (GLuint program)) \
+f(void  , glVertexAttribPointer                 , (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer)) \
+f(void  , glViewport                            , (GLint x, GLint y, GLsizei width, GLsizei height)) \
 
-#define WNULL_GL_FUNCTIONS(f) \
-    f(void  , glBindFramebuffer                     , (GLenum target, GLuint framebuffer)) \
-    f(void  , glBindRenderbuffer                    , (GLenum target, GLuint renderbuffer)) \
-    f(GLenum, glCheckFramebufferStatus              , (GLenum target)) \
-    f(void  , glDeleteFramebuffers                  , (GLsizei n, const GLuint *framebuffers)) \
-    f(void  , glDeleteRenderbuffers                 , (GLsizei n, const GLuint *framebuffers)) \
-    f(void  , glEGLImageTargetRenderbufferStorageOES, (GLenum target, GLeglImageOES image)) \
-    f(void  , glFinish                              , ()) \
-    f(void  , glFramebufferRenderbuffer             , (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer)) \
-    f(void  , glGenFramebuffers                     , (GLsizei n, GLuint *framebuffers)) \
-    f(void  , glGenRenderbuffers                    , (GLsizei n, GLuint *renderbuffers)) \
-    f(GLenum, glGetError                            , ()) \
-    f(void  , glGetIntegerv                         , (GLenum pname, GLint *data)) \
-    f(void  , glRenderbufferStorage                 , (GLenum target, GLenum internalformat, GLsizei width, GLsizei height)) \
-    f(void  , glScissor                             , (GLint x, GLint y, GLsizei width, GLsizei height)) \
-    f(void  , glViewport                            , (GLint x, GLint y, GLsizei width, GLsizei height))
 
 struct wnull_context {
     struct wegl_context wegl;
 #define DECLARE(type, name, args) type (*name) args;
-    WNULL_GL_FUNCTIONS(DECLARE)
+    GL_FUNCTIONS(DECLARE)
 #undef DECLARE
 };
 

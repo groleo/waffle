@@ -7,41 +7,31 @@
 #define _GNU_SOURCE
 
 #include <dlfcn.h>
-#include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
-
-#include <libudev.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
-#include <i915_drm.h>
 
 #include "wcore_error.h"
 
 #include "wgbm_display.h"
-#include "wgbm_platform.h"
 
+#include "wnull_buffer.h"
+#include "wnull_context.h"
 #include "wnull_display.h"
+#include "wnull_platform.h"
 
-#define ARRAY_END(a) ((a)+sizeof(a)/sizeof((a)[0]))
-#define MIN(a,b) ((a)<(b)?(a):(b))
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
 #if 0
+#include <errno.h>
 #include <stdio.h>
 #define prt(...) fprintf(stderr, __VA_ARGS__)
 #else
 #define prt(...)
 #endif
-
-struct wnull_display_buffer {
-    struct wgbm_platform *plat;
-    struct gbm_bo *bo;
-    uint32_t drm_fb;
-    int drm_fd;
-    int dmabuf_fd;
-    void (*finish)();
-};
 
 struct drm_display {
     struct gbm_device *gbm_device;
@@ -51,296 +41,16 @@ struct drm_display {
     int32_t width;
     int32_t height;
     bool setcrtc_done;
+    struct slbuf *scanout[2]; // front & back
+    struct slbuf *screen_buffer; // on screen
+    struct slbuf *pending_buffer; // scheduled flip to this
     bool flip_pending;
-    struct wnull_display_buffer scanout[2];
-    struct wnull_display_buffer *current;
 };
 
-
-static void
-wnull_display_buffer_teardown(struct wnull_display_buffer *buf)
-{
-    if (!buf || !buf->bo)
-        return;
-    if (buf->dmabuf_fd >= 0) {
-        close(buf->dmabuf_fd);
-        buf->dmabuf_fd = -1;
-    }
-    if (buf->drm_fd >= 0) {
-        drmModeRmFB(buf->drm_fd, buf->drm_fb);
-        buf->drm_fd = -1;
-    }
-    buf->plat->gbm_bo_destroy(buf->bo);
-    buf->bo = NULL;
-    prt("tore down display buffer %p\n",buf);
-}
-
-void
-wnull_display_buffer_destroy(struct wnull_display_buffer *buf)
-{
-    wnull_display_buffer_teardown(buf);
-    free(buf);
-    prt("destroyed display buffer %p\n",buf);
-}
-
-static bool
-wnull_display_buffer_init(struct wnull_display_buffer *self,
-                          struct wnull_display *dpy,
-                          int width, int height,
-                          uint32_t format, uint32_t flags,
-                          void (*finish)())
-{
-    if (self->bo)
-        return true;
-
-    self->plat = wgbm_platform(wegl_platform(dpy->wegl.wcore.platform));
-    self->drm_fd = -1;
-    self->dmabuf_fd = -1;
-    self->finish = finish;
-
-    if (width == -1 && height == -1) {
-        width = dpy->drm->width;
-        height = dpy->drm->height;
-    }
-
-    self->bo = self->plat->gbm_bo_create(dpy->drm->gbm_device,
-                                         width, height,
-                                         format, flags);
-    if (self->bo) {
-        prt("init-ed display buffer %p\n",self);
-        return true;
-    }
-
-    wnull_display_buffer_teardown(self);
-    return false;
-}
-
-struct wnull_display_buffer *
-wnull_display_buffer_create(struct wnull_display *dpy,
-                            int width, int height,
-                            uint32_t format, uint32_t flags,
-                            void (*finish)())
-{
-    struct wnull_display_buffer *buf = wcore_calloc(sizeof(*buf));
-    if (!buf)
-        return NULL;
-
-    if (wnull_display_buffer_init(buf, dpy, width, height, format, flags, finish)) {
-        prt("created display buffer %p\n",buf);
-        return buf;
-    }
-
-    wnull_display_buffer_destroy(buf);
-    return NULL;
-}
-
-bool
-wnull_display_buffer_dmabuf(struct wnull_display_buffer *buf,
-                            int *fd,
-                            uint32_t *stride)
-{
-    if (!buf->bo)
-        return false;
-    if (buf->dmabuf_fd < 0)
-        buf->dmabuf_fd = buf->plat->gbm_bo_get_fd(buf->bo);
-    if (buf->dmabuf_fd < 0)
-        return false;
-    if (fd)
-        *fd = buf->dmabuf_fd;
-    if (stride)
-        *stride = buf->plat->gbm_bo_get_stride(buf->bo);
-    return true;
-}
-
-static void
-page_flip_handler(int fd,
-                  unsigned int sequence,
-                  unsigned int tv_sec,
-                  unsigned int tv_usec,
-                  void *user_data)
-{
-    struct drm_display *drm = (struct drm_display *) user_data;
-    assert(drm->flip_pending);
-    drm->flip_pending = false;
-}
-
-bool
-wnull_display_show_buffer(struct wnull_display *dpy,
-                          struct wnull_display_buffer *buf)
-{
-    struct drm_display *drm = dpy->drm;
-    struct wgbm_platform *plat = buf->plat;
-    int fd = plat->gbm_device_get_fd(drm->gbm_device);
-
-    prt("showing %p\n", buf);
-    if (!drm->crtc)
-        return true;
-
-    assert(buf->bo);
-    if (buf->drm_fd < 0) {
-        if (drmModeAddFB(fd,
-                         plat->gbm_bo_get_width(buf->bo),
-                         plat->gbm_bo_get_height(buf->bo),
-                         24, 32,
-                         plat->gbm_bo_get_stride(buf->bo),
-                         plat->gbm_bo_get_handle(buf->bo).u32,
-                         &buf->drm_fb)) {
-            wcore_errorf(WAFFLE_ERROR_UNKNOWN,
-                         "drm addfb failed: errno=%d",
-                         errno);
-            return false;
-        }
-        buf->drm_fd = fd;
-    }
-
-    if (!drm->setcrtc_done) {
-        if (drmModeSetCrtc(fd, drm->crtc->crtc_id, buf->drm_fb, 0, 0,
-                           &drm->conn->connector_id, 1, drm->mode)) {
-            wcore_errorf(WAFFLE_ERROR_UNKNOWN,
-                         "drm setcrtc failed: errno=%d",
-                         errno);
-            return false;
-        }
-        drm->setcrtc_done = true;
-    }
-
-    // wait for pending flip, if any
-    if (drm->flip_pending) {
-        drmEventContext event = {
-            .version = DRM_EVENT_CONTEXT_VERSION,
-            .page_flip_handler = page_flip_handler,
-        };
-        drmHandleEvent(fd, &event);
-    }
-    assert(!drm->flip_pending);
-
-    // do this after waiting for flip because during that wait
-    // rendering could proceed, making this wait shorter
-    if (buf->finish)
-        buf->finish();
-
-    drm->flip_pending = true;
-    if (drmModePageFlip(fd, drm->crtc->crtc_id, buf->drm_fb,
-                        DRM_MODE_PAGE_FLIP_EVENT, drm)) {
-        wcore_errorf(WAFFLE_ERROR_UNKNOWN,
-                     "drm page flip failed: errno=%d",
-                     errno);
-        return false;
-    }
-
-    return true;
-}
-
-//XXX i915-specific
-static bool
-buffer_copy(struct wnull_display_buffer *dst,
-            struct wnull_display_buffer *src)
-{
-    assert(dst->bo);
-    assert(src->bo);
-
-    struct drm_i915_gem_get_tiling dst_tiling = {
-        .handle = dst->plat->gbm_bo_get_handle(dst->bo).u32,
-    };
-    struct drm_i915_gem_get_tiling src_tiling = {
-        .handle = src->plat->gbm_bo_get_handle(src->bo).u32,
-    };
-    int dst_fd = dst->plat->gbm_device_get_fd(dst->plat->gbm_bo_get_device(dst->bo));
-    int src_fd = src->plat->gbm_device_get_fd(src->plat->gbm_bo_get_device(src->bo));
-
-    if (drmIoctl(dst_fd, DRM_IOCTL_I915_GEM_GET_TILING, &dst_tiling) ||
-        drmIoctl(src_fd, DRM_IOCTL_I915_GEM_GET_TILING, &src_tiling))
-        return false;
-
-    if (dst_tiling.tiling_mode != src_tiling.tiling_mode)
-        return false;
-
-    unsigned rows;
-    switch (dst_tiling.tiling_mode) {
-        case I915_TILING_NONE:
-            rows = 1;
-            break;
-        case I915_TILING_X:
-            rows = 8;
-            break;
-        default:
-            return false;
-    }
-
-    unsigned dst_step = dst->plat->gbm_bo_get_stride(dst->bo) * rows;
-    unsigned src_step = src->plat->gbm_bo_get_stride(src->bo) * rows;
-    unsigned copy_size = MIN(src_step, dst_step);
-    // round up, not down, or we miss the last partly filled tile
-    unsigned num_copy = (MIN(src->plat->gbm_bo_get_height(src->bo),
-                             dst->plat->gbm_bo_get_height(dst->bo)) + rows - 1)
-                             / rows;
-
-    void *tmp = malloc(copy_size);
-    if (!tmp)
-        return false;
-
-    struct drm_i915_gem_pread pread = {
-        .handle = src->plat->gbm_bo_get_handle(src->bo).u32,
-        .size = copy_size,
-        .offset = 0,
-        .data_ptr = (uint64_t) (uintptr_t) tmp,
-    };
-
-    struct drm_i915_gem_pwrite pwrite = {
-        .handle = dst->plat->gbm_bo_get_handle(dst->bo).u32,
-        .size = copy_size,
-        .offset = 0,
-        .data_ptr = (uint64_t) (uintptr_t) tmp,
-    };
-
-    // blit on gpu must be faster than this, but seems complicated to do
-    bool ok = true;
-    for (int i = 0; ok && i < num_copy; ++i) {
-        ok = !(drmIoctl(src_fd, DRM_IOCTL_I915_GEM_PREAD, &pread) ||
-               drmIoctl(dst_fd, DRM_IOCTL_I915_GEM_PWRITE, &pwrite));
-        pread.offset += src_step;
-        pwrite.offset += dst_step;
-    }
-    free(tmp);
-    return ok;
-}
-
-bool
-wnull_display_copy_buffer(struct wnull_display *dpy,
-                          struct wnull_display_buffer *buf)
-{
-    struct drm_display *drm = dpy->drm;
-
-    prt("copying %p\n", buf);
-    if (!drm->current)
-        drm->current = drm->scanout;
-
-    if (!wnull_display_buffer_init(drm->current,
-                                   dpy,
-                                   -1, -1,
-                                   buf->plat->gbm_bo_get_format(buf->bo),
-                                   GBM_BO_USE_SCANOUT,
-                                   NULL))
-        return false;
-
-    assert(buf->finish);
-    buf->finish();
-
-    if (!buffer_copy(drm->current, buf)) {
-        prt("copy failed %p\n", buf);
-        return false;
-    }
-
-    if ( !wnull_display_show_buffer(dpy, drm->current)) {
-        prt("show failed %p\n", buf);
-        return false;
-    }
-
-    ++drm->current;
-    if (drm->current == ARRAY_END(drm->scanout))
-        drm->current = drm->scanout;
-    return true;
-}
+struct ctx_win {
+    struct wnull_context *ctx;
+    struct wnull_window *win;
+};
 
 static drmModeModeInfoPtr
 choose_mode(drmModeConnectorPtr conn)
@@ -360,10 +70,8 @@ choose_mode(drmModeConnectorPtr conn)
 static int
 choose_crtc(int fd, unsigned count_crtcs, drmModeConnectorPtr conn)
 {
-    drmModeEncoderPtr enc = 0;
     for (int i = 0; i < conn->count_encoders; ++i) {
-        drmModeFreeEncoder(enc);
-        enc = drmModeGetEncoder(fd, conn->encoders[i]);
+        drmModeEncoderPtr enc = drmModeGetEncoder(fd, conn->encoders[i]);
         unsigned b = enc->possible_crtcs;
         drmModeFreeEncoder(enc);
         for (int j = 0; b && j < count_crtcs; b >>= 1, ++j) {
@@ -377,9 +85,11 @@ choose_crtc(int fd, unsigned count_crtcs, drmModeConnectorPtr conn)
 static void
 drm_display_destroy(struct drm_display *self, struct wgbm_platform *plat)
 {
-    struct wnull_display_buffer *buf;
-    for (buf = self->scanout; buf < ARRAY_END(self->scanout); ++buf)
-        wnull_display_buffer_teardown(buf);
+    for (int i = 0; i < ARRAY_SIZE(self->scanout); ++i)
+        slbuf_destroy(self->scanout[i]);
+
+    drmModeFreeConnector(self->conn);
+    drmModeFreeCrtc(self->crtc);
 
     if (self->gbm_device) {
         int fd = plat->gbm_device_get_fd(self->gbm_device);
@@ -387,7 +97,6 @@ drm_display_destroy(struct drm_display *self, struct wgbm_platform *plat)
         close(fd);
     }
 
-    drmModeFreeConnector(self->conn);
     free(self);
 }
 
@@ -414,7 +123,7 @@ drm_display_create(int fd, struct wgbm_platform *plat)
     }
 
     bool monitor_connected = false;
-    for (int i = 0; i < mr->count_connectors; ++i) {
+    for (int i = 0; !drm->crtc && i < mr->count_connectors; ++i) {
         drmModeFreeConnector(drm->conn);
         drm->conn = drmModeGetConnector(fd, mr->connectors[i]);
         if (!drm->conn || drm->conn->connection != DRM_MODE_CONNECTED)
@@ -427,17 +136,18 @@ drm_display_create(int fd, struct wgbm_platform *plat)
         if (n < 0)
             continue;
         drm->crtc = drmModeGetCrtc(fd, mr->crtcs[n]);
-        if (drm->crtc) {
-            drm->width = drm->mode->hdisplay;
-            drm->height = drm->mode->vdisplay;
-            return drm;
-        }
+    }
+    drmModeFreeResources(mr);
+
+    if (drm->crtc) {
+        drm->width = drm->mode->hdisplay;
+        drm->height = drm->mode->vdisplay;
+        return drm;
     }
 
     if (!monitor_connected) {
         prt("headless\n");
-        assert(!drm->crtc);
-        // arbitrary
+        // arbitrary size, so programs that request fullscreen windows can work
         drm->width = 1280;
         drm->height = 1024;
         return drm;
@@ -452,11 +162,12 @@ bool
 wnull_display_destroy(struct wcore_display *wc_self)
 {
     struct wnull_display *self = wnull_display(wc_self);
+
     if (!self)
         return true;
 
     if (self->drm)
-        drm_display_destroy(self->drm,
+        drm_display_destroy(self->drm, 
                             wgbm_platform(wegl_platform(wc_self->platform)));
 
     bool ok = wegl_display_teardown(&self->wegl);
@@ -496,12 +207,48 @@ wnull_display_connect(struct wcore_platform *wc_plat,
                            (intptr_t) self->drm->gbm_device))
         goto error;
 
+    self->param.width = self->drm->width;
+    self->param.height = self->drm->height;
+    self->param.color = true;
+    self->param.gbm_device = self->drm->gbm_device;
+    self->param.egl_display = self->wegl.egl;
+
+#define ASSIGN(type, name, args) self->func.name = plat->name;
+    GBM_FUNCTIONS(ASSIGN);
+#undef ASSIGN
+
+#define ASSIGN(type, name, args) self->func.name = plat->wegl.name;
+    EGL_FUNCTIONS(ASSIGN);
+#undef ASSIGN
+
     prt("create display %p\n",self);
     return &self->wegl.wcore;
 
 error:
     wnull_display_destroy(&self->wegl.wcore);
     return NULL;
+}
+
+bool
+wnull_display_supports_context_api(struct wcore_display *wc_dpy,
+                                   int32_t waffle_context_api)
+{
+    struct wegl_display *dpy = wegl_display(wc_dpy);
+    struct wcore_platform *wc_plat = dpy->wcore.platform;
+
+    switch (waffle_context_api) {
+        case WAFFLE_CONTEXT_OPENGL_ES2:
+            return dpy->EXT_image_dma_buf_import &&
+                wc_plat->vtbl->dl_can_open(wc_plat, WAFFLE_DL_OPENGL_ES2);
+        case WAFFLE_CONTEXT_OPENGL:
+        case WAFFLE_CONTEXT_OPENGL_ES1:
+        case WAFFLE_CONTEXT_OPENGL_ES3:
+            break;
+        default:
+            wcore_error_internal("waffle_context_api has bad value %#x",
+                                 waffle_context_api);
+    }
+    return false;
 }
 
 void
@@ -535,11 +282,26 @@ wnull_display_get_native(struct wcore_display *wc_self)
     return n_dpy;
 }
 
-struct ctx_win {
-    struct wnull_context *ctx;
-    struct wnull_window *win;
-};
+struct gbm_device*
+wnull_display_get_gbm_device(struct wnull_display *self)
+{
+    return self->drm->gbm_device;
+}
 
+void
+wnull_display_forget_buffer(struct wnull_display *self, struct slbuf *buf)
+{
+    struct drm_display *dpy = self->drm;
+
+    if (dpy->screen_buffer == buf)
+        dpy->screen_buffer = NULL;
+    if (dpy->pending_buffer == buf)
+        dpy->pending_buffer = NULL;
+}
+
+// This must be called when context is going to change to 'ctx' but before
+// actually changing the context (calling eglMakeCurrent).
+//
 // Keep track of which context is current and maintain a list of which
 // context/window pairs have been current.
 // This lets us answer two questions:
@@ -553,7 +315,7 @@ struct ctx_win {
 // Finally the current context is set to 'ctx.'
 //
 // Caller responsible for freeing *old_win_ptr.
-// Return false for failure and do not modify the output parameters.
+// Return false for failure and do not modify *old_win_ptr.
 bool
 wnull_display_make_current(struct wnull_display *self,
                            struct wnull_context *ctx,
@@ -573,6 +335,11 @@ wnull_display_make_current(struct wnull_display *self,
         if (!old_win)
             return false;
         *old_win_ptr = old_win;
+
+        // Clean up any GL resources the display may have created
+        // in the outgoing context.
+        for (int i = 0; i < ARRAY_SIZE(self->drm->scanout); ++i)
+            slbuf_free_gl_resources(self->drm->scanout[i]);
     }
 
     // search for given pair; build list of windows found with current context
@@ -596,6 +363,8 @@ wnull_display_make_current(struct wnull_display *self,
             self->len_cur += 5;
             self->cur = realloc(self->cur,
                                 self->len_cur * sizeof(self->cur[0]));
+            if (!self->cur)
+                return false;
         }
         // add at end
         self->cur[self->num_cur].ctx = ctx;
@@ -603,10 +372,21 @@ wnull_display_make_current(struct wnull_display *self,
         ++self->num_cur;
     }
 
+    if (ctx) {
+#define ASSIGN(type, name, args) self->func.name = ctx->name;
+        GL_FUNCTIONS(ASSIGN);
+#undef ASSIGN
+    }
+
     prt("ctx/win list after:\n"); for (int i = 0; i < self->num_cur; ++i) prt("  %p/%p\n", self->cur[i].ctx, self->cur[i].win);
     self->current_context = ctx;
+    self->current_window = win;
+    struct wnull_platform *plat =
+        wnull_platform(wgbm_platform(wegl_platform(self->wegl.wcore.platform)));
+    plat->current_display = self;
 
     assert(self->num_cur <= self->len_cur);
+
     return true;
 }
 
@@ -628,4 +408,126 @@ wnull_display_clean(struct wnull_display *self,
             ++i;
     }
     prt("ctx/win list after:\n"); for (int i = 0; i < self->num_cur; ++i) prt("  %p/%p\n", self->cur[i].ctx, self->cur[i].win);
+}
+
+static void
+page_flip_handler(int fd,
+                  unsigned int sequence,
+                  unsigned int tv_sec,
+                  unsigned int tv_usec,
+                  void *user_data)
+{
+    struct drm_display *dpy = (struct drm_display *) user_data;
+
+    assert(dpy->flip_pending);
+    dpy->flip_pending = false;
+
+    if (dpy->screen_buffer) {
+        // the buffer that was on screen isn't now
+        slbuf_set_display(dpy->screen_buffer, NULL);
+        dpy->screen_buffer = NULL;
+    }
+
+    if (dpy->pending_buffer) {
+        // the buffer that was pending is now on screen
+        dpy->screen_buffer = dpy->pending_buffer;
+        dpy->pending_buffer = NULL;
+    }
+}
+
+bool
+wnull_display_present_buffer(struct wnull_display *self,
+                             struct slbuf *buf,
+                             bool (*copier)(struct slbuf *, struct slbuf *),
+                             bool wait_for_vsync)
+{
+    struct drm_display *dpy = self->drm;
+
+    if (!dpy->crtc)
+        // no monitor
+        return true;
+
+    int fd = self->func.gbm_device_get_fd(dpy->gbm_device);
+    struct pollfd pfd = { fd, POLLIN };
+    if (poll(&pfd, 1, 0) < 0) {
+        prt("poll failed %d\n", errno);
+        return false;
+    }
+    bool wont_block = pfd.revents & POLLIN;
+
+    if (dpy->flip_pending && (wait_for_vsync || wont_block)) {
+        prt("waiting for flip ");
+        if (wont_block) prt("but shouldn't take long");
+        prt("\n");
+        drmEventContext event = {
+            .version = DRM_EVENT_CONTEXT_VERSION,
+            .page_flip_handler = page_flip_handler,
+        };
+        drmHandleEvent(fd, &event);
+        assert(!dpy->flip_pending);
+    }
+
+    if (dpy->flip_pending) {
+        // Do not present 'buf' because an earler buffer is pending and we
+        // don't want to wait.
+        prt("will not show %p\n", buf);
+        // Without a flush here it seems like the pipeline gets backlogged
+        // and animation can be jerky.
+        slbuf_flush(buf);
+        return true;
+    }
+
+    struct slbuf *show = buf;
+
+    if (copier) {
+        self->param.gbm_flags = GBM_BO_USE_SCANOUT;
+        if (copier == slbuf_copy_gl)
+            self->param.gbm_flags |= GBM_BO_USE_RENDERING;
+
+        //TODO if format changes we should probably recreate scanout buffers
+        self->param.gbm_format = slbuf_gbm_format(buf);
+        show = slbuf_get_buffer(dpy->scanout,
+                                ARRAY_SIZE(dpy->scanout),
+                                &self->param,
+                                &self->func);
+        if (!show) {
+            prt("no back buffer\n");
+            return false;
+        }
+
+        prt("copy %p to %p\n", buf, show);
+        slbuf_finish(buf);
+        if (!copier(show, buf)) {
+            prt("copy failed\n");
+            return false;
+        }
+    }
+
+    slbuf_finish(show);
+
+    uint32_t fb;
+    if (!slbuf_get_drmfb(show, &fb))
+        return false;
+
+    if (!dpy->setcrtc_done) {
+        if (drmModeSetCrtc(fd, dpy->crtc->crtc_id, fb, 0, 0,
+                           &dpy->conn->connector_id, 1, dpy->mode)) {
+            prt("drm setcrtc failed %d\n", errno);
+            return false;
+        }
+        dpy->setcrtc_done = true;
+        dpy->screen_buffer = show;
+    } else {
+        if (drmModePageFlip(fd, dpy->crtc->crtc_id, fb,
+                            DRM_MODE_PAGE_FLIP_EVENT, dpy)) {
+            prt("drm page flip failed %d", errno);
+            return false;
+        }
+        prt("scheduled flip to %p\n", show);
+        dpy->flip_pending = true;
+        dpy->pending_buffer = show;
+    }
+
+    slbuf_set_display(show, self);
+    return true;
 }
