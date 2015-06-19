@@ -61,6 +61,8 @@ wnull_context_create(struct wcore_platform *wc_plat,
 
 #define LOOKUP(type, name, args) \
     ctx->name = linux_platform_dl_sym(plat->linux, dl, #name); \
+    if (!ctx->name) \
+        ctx->name = (void*)plat->wegl.eglGetProcAddress(#name); \
     ok &= ctx->name != NULL;
     GL_FUNCTIONS(LOOKUP)
 #undef LOOKUP

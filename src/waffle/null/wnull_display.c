@@ -9,6 +9,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdio.h>
 #include <unistd.h>
 
 #include <xf86drm.h>
@@ -178,6 +179,30 @@ wnull_display_destroy(struct wcore_display *wc_self)
     return ok;
 }
 
+static int kms_device_fd()
+{
+    bool has_conn = false;
+    for (int i = 0; i < 8; ++i) {
+        char path[99];
+        sprintf(path, "/dev/dri/card%d", i);
+        prt("trying %s\n", path);
+        int fd = open(path, O_RDWR | O_CLOEXEC);
+        if (fd >= 0) {
+            drmModeResPtr mr = drmModeGetResources(fd);
+            if (mr) {
+                has_conn = mr->count_connectors > 0;
+                drmModeFreeResources(mr);
+            }
+            if (has_conn) {
+                prt("using %s\n", path);
+                return fd;
+            }
+            close(fd);
+        }
+    }
+    return -1;
+}
+
 struct wcore_display*
 wnull_display_connect(struct wcore_platform *wc_plat,
                       const char *name)
@@ -192,7 +217,7 @@ wnull_display_connect(struct wcore_platform *wc_plat,
     if (name != NULL)
         fd = open(name, O_RDWR | O_CLOEXEC);
     else
-        fd = wgbm_get_default_fd_for_pattern("card[0-9]*");
+        fd = kms_device_fd();
 
     if (fd < 0) {
         wcore_errorf(WAFFLE_ERROR_UNKNOWN, "open drm file for gbm failed");
