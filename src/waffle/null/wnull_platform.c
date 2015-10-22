@@ -43,7 +43,7 @@ wnull_platform_create(void)
         return NULL;
     }
 
-    setenv("EGL_PLATFORM", "null", true);
+    setenv("EGL_PLATFORM", "surfaceless", true);
 
     self->wgbm.wegl.wcore.vtbl = &wnull_platform_vtbl;
     return &self->wgbm.wegl.wcore;
