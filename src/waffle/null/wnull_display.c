@@ -228,8 +228,7 @@ wnull_display_connect(struct wcore_platform *wc_plat,
     if (!self->drm)
         goto error;
 
-    if (!wegl_display_init(&self->wegl, wc_plat,
-                           (intptr_t) self->drm->gbm_device))
+    if (!wegl_display_init(&self->wegl, wc_plat, (intptr_t)EGL_DEFAULT_DISPLAY))
         goto error;
 
     self->param.width = self->drm->width;
